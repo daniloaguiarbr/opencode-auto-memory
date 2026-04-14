@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+
+# opencode runtime state files (per-project, should never be committed)
+.opencode-auto-memory.state.json
+.opencode-memory-guardian.state.json
+
+# editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# package manager locks (plugin has no runtime deps of its own)
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
