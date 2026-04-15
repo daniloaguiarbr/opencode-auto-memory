@@ -76,6 +76,68 @@ JAMAIS persista em apenas um. JAMAIS omita um canal. JAMAIS encerre sem completa
 
 ---
 
+### PROIBIÇÃO ABSOLUTA — DADOS SENSÍVEIS E SECRETS
+Memória é PERSISTENTE, indexável e compartilhável entre sessões.
+Qualquer secret escrito AQUI é vazado PARA SEMPRE. NENHUMA EXCEÇÃO.
+
+PROIBIDO persistir QUALQUER item abaixo, em prosa, code block, JSON, YAML,
+diff, log, transcript, trace, output de tool ou qualquer outro formato.
+Se precisar registrar que um secret EXISTE, use placeholder genérico:
+\`<REDACTED:tipo>\`, \`<TOKEN>\`, \`<PASSWORD>\`, \`<PRIVATE_KEY>\`.
+
+#### Categoria A — Credenciais de nuvem
+- Chaves AWS: \`AKIA...\`, \`ASIA...\`, \`aws_secret_access_key\`, tokens STS temporários
+- GCP: service account JSON completo, chaves privadas P12, tokens OAuth de SA
+- Azure: connection strings (\`DefaultEndpointsProtocol=...;AccountKey=...\`), SAS tokens
+- DigitalOcean, Linode, Hetzner, Vultr: PATs e API tokens
+- Cloudflare: API keys globais, tokens de DNS/Workers/R2
+
+#### Categoria B — Tokens de API e plataformas
+- GitHub PAT (\`ghp_...\`, \`github_pat_...\`), GitLab (\`glpat-...\`), Bitbucket app passwords
+- OpenAI (\`sk-...\`), Anthropic (\`sk-ant-...\`), Context7 (\`ctx7sk-...\`), Gemini API keys
+- Slack (\`xoxb-...\`, \`xoxp-...\`, \`xapp-...\`), webhook URLs com secret, Discord bot tokens
+- Stripe (\`sk_live_...\`, \`rk_live_...\`), Twilio auth tokens, SendGrid API keys
+- QUALQUER \`Authorization: Bearer ...\`, JWT completo (header.payload.signature)
+- Webhooks com secret embutido na URL (\`hooks.slack.com/services/T.../B.../...\`)
+
+#### Categoria C — Credenciais de banco e serviços
+- Strings de conexão com senha inline: \`postgres://user:senha@host\`, \`mongodb+srv://user:senha@...\`, \`mysql://...\`, \`redis://:senha@...\`
+- Senhas de DB em qualquer formato (Postgres, MySQL, MongoDB, Redis \`requirepass\`)
+- Credenciais SMTP (Gmail App Password, SendGrid SMTP, AWS SES SMTP, Mailgun)
+- URLs com basic-auth embutido: \`https://user:pass@host/path\`
+- Credenciais de message broker (RabbitMQ user:pass, Kafka SASL)
+
+#### Categoria D — PII e segredos pessoais
+- CPF, RG, CNH, passaporte, cartão de crédito (PAN, CVV, validade, nome impresso)
+- Chaves privadas: QUALQUER conteúdo entre \`-----BEGIN ... PRIVATE KEY-----\` e \`-----END ... PRIVATE KEY-----\`
+- Conteúdo de \`~/.ssh/id_*\` (exceto arquivos \`.pub\`), \`~/.gnupg/\`, \`.env\`, \`.env.local\`, \`secrets.yaml\`, \`secrets.yml\`
+- Arquivos \`~/.aws/credentials\`, \`~/.config/gcloud/\`, kubeconfig com tokens, \`~/.netrc\`
+- 2FA seeds TOTP, OTP secrets, backup codes, recovery phrases (seed phrases) de carteiras crypto
+- Endereços residenciais, números de telefone pessoais, dados médicos
+
+#### Protocolo de redação quando o secret APARECEU na sessão
+1. NUNCA copie o valor literal para Serena NEM para MEMORY.md
+2. Se precisar registrar que o secret foi manipulado, descreva APENAS:
+   - QUAL serviço/recurso ele protege (ex: "token do GitHub com scope \`repo\`")
+   - ONDE ele vive (ex: "variável \`GH_TOKEN\` em \`~/.bashrc\` linha 42")
+   - COMO foi usado (ex: "passado via env para \`gh pr create\`")
+3. SUBSTITUA o valor por placeholder tipado: \`<REDACTED:github_pat>\`, \`<REDACTED:aws_access_key>\`, \`<REDACTED:db_password>\`
+4. Se o secret já foi exposto em transcripts anteriores, ISSO NÃO AUTORIZA repetir. Trate CADA escrita como nova violação.
+
+#### Heurística OBRIGATÓRIA de varredura antes de escrever
+ANTES de chamar \`write_memory\`, \`edit_memory\`, \`Edit\` ou \`Write\` em MEMORY.md,
+VARRA MENTALMENTE o payload. Se QUALQUER um destes sinais aparecer: REMOVA
+e substitua por placeholder tipado.
+- Strings de 20+ caracteres alfanuméricos sem espaço que parecem tokens opacos
+- Prefixos conhecidos: \`sk-\`, \`sk-ant-\`, \`ghp_\`, \`github_pat_\`, \`glpat-\`, \`xox\`, \`AKIA\`, \`ASIA\`, \`ctx7sk-\`, \`sk_live_\`, \`rk_live_\`
+- Base64 longos (40+ chars) sem contexto claro de ser hash público
+- URLs contendo \`:senha@\`, \`?apikey=\`, \`?api_key=\`, \`&token=\`, \`&access_token=\`
+- Blocos PEM (\`-----BEGIN\`) em QUALQUER variante
+- Campos nomeados contendo valor: \`password\`, \`passwd\`, \`secret\`, \`api_key\`, \`apikey\`, \`token\`, \`auth\`, \`bearer\`, \`client_secret\`, \`private_key\`
+- Conteúdo lido de \`.env*\`, \`~/.ssh/\`, \`~/.aws/\`, \`~/.gnupg/\`, \`~/.config/gcloud/\`, \`~/.netrc\`, \`credentials*\`
+
+---
+
 ### CATEGORIA 1 — Planos e Tarefas Executadas
 Se um plano foi criado E executado (total ou parcialmente), documente:
 - **Objetivo**: QUAL era o problema ou necessidade
@@ -121,6 +183,9 @@ PROIBIDO encerrar com QUALQUER item pendente. NENHUMA EXCEÇÃO.
 
 - [ ] Revisei TODAS as 4 categorias acima
 - [ ] Identifiquei TODO conteúdo relevante desta sessão
+- [ ] VARREDURA DE SECRETS: apliquei a heurística da seção DADOS SENSÍVEIS em CADA payload
+- [ ] Nenhum valor literal das Categorias A/B/C/D está presente em nenhum dos dois canais
+- [ ] Qualquer secret necessário ao contexto foi substituído por placeholder tipado \`<REDACTED:tipo>\`
 - [ ] CANAL 1 COMPLETO: Salvei no MCP Serena via \`write_memory\` ou \`edit_memory\`
 - [ ] CANAL 2 COMPLETO: Salvei no MEMORY.md do projeto via \`Edit\` ou \`Write\`
 - [ ] AMBOS os canais contêm as mesmas informações essenciais
@@ -132,7 +197,9 @@ ${PERSISTENCE_MARKER}
 Essa tag sinaliza ao Memory Guardian que a persistência foi concluída e
 encerra o ciclo para esta sessão.`
 
-const COMPACTING_CONTEXT = `[opencode-auto-memory] Before compacting: make sure ALL learnings, code changes, executed plans, and decisions from this session have ALREADY been persisted via MCP Serena (\`write_memory\`) AND in the project-local MEMORY.md. Compaction loses information — dual-write now or never.`
+const COMPACTING_CONTEXT = `[opencode-auto-memory] Before compacting: make sure ALL learnings, code changes, executed plans, and decisions from this session have ALREADY been persisted via MCP Serena (\`write_memory\`) AND in the project-local MEMORY.md. Compaction loses information — dual-write now or never.
+
+[SECRETS REDACTION — MANDATORY] Before writing to Serena or MEMORY.md, SCAN the payload for credentials and PII (AWS/GCP/Azure keys, GitHub/OpenAI/Anthropic tokens, DB connection strings with inline passwords, PEM private keys, \`.env\` contents, CPF/credit card, OAuth bearers, JWTs). If ANY is found, REPLACE the literal value with a typed placeholder like \`<REDACTED:github_pat>\`, \`<REDACTED:aws_access_key>\`, \`<REDACTED:db_password>\`. Never persist raw secret values — memory is permanent and indexable. Previous exposure in transcripts does NOT authorize copying. When in doubt, redact.`
 
 export const AutoMemoryPlugin: Plugin = async ({ directory, client }) => {
   return {
