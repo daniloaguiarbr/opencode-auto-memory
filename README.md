@@ -60,9 +60,15 @@ Per-project state in `.opencode-auto-memory.state.json`:
 }
 ```
 
-When the agent's last message contains `<memory-persisted/>`, the plugin
-marks the session as persisted and stops re-injecting. Subsequent
-`session.idle` events in the same session become no-ops.
+When the agent's last message contains `<memory-persisted/>`, the plugin does
+not trust the marker alone. It first verifies concrete evidence that the same
+turn:
+
+- executed a Serena memory tool (`write_memory` or `edit_memory`), and
+- actually touched `MEMORY.md` via a file-edit tool or emitted `patch` part.
+
+Only then does it mark the session as persisted and stop re-injecting.
+Subsequent `session.idle` events in the same session become no-ops.
 
 ### Substantive-work detection
 
@@ -74,6 +80,24 @@ The plugin re-prompts only when **either** condition holds:
 - The last assistant response is ≥ 1500 characters.
 
 Short, read-only turns are ignored — no noise, no unnecessary re-prompts.
+
+### Strong validation of dual-write
+
+The plugin now rejects `<memory-persisted/>` if it cannot prove both channels
+were updated in the same persistence turn.
+
+Evidence accepted for Serena:
+
+- tool part named `write_memory` or `edit_memory`
+- MCP-style tool name variants such as `serena__write_memory`
+
+Evidence accepted for local memory:
+
+- `patch` part referencing `MEMORY.md`
+- write/edit/apply_patch-like tool input that mentions `MEMORY.md`
+
+If one side is missing, the plugin re-prompts with a specific error telling the
+agent which channel was not detected.
 
 ## Installation
 

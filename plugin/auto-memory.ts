@@ -24,6 +24,7 @@ import { join, dirname } from "path"
 
 const STATE_FILE = ".opencode-auto-memory.state.json"
 const PERSISTENCE_MARKER = "<memory-persisted/>"
+const MEMORY_FILE = "MEMORY.md"
 const MIN_RESPONSE_CHARS = 1500
 const WRITE_TOOLS = new Set([
   "write",
@@ -105,6 +106,95 @@ function hasWriteLikePart(part: any): boolean {
     typeof part.tool === "string" &&
     WRITE_TOOLS.has(part.tool.toLowerCase())
   )
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return ""
+  }
+}
+
+function toolNameMatches(tool: string, candidates: Array<string>): boolean {
+  const normalized = tool.toLowerCase()
+  return candidates.some(
+    (candidate) =>
+      normalized === candidate ||
+      normalized.endsWith(`.${candidate}`) ||
+      normalized.endsWith(`:${candidate}`) ||
+      normalized.endsWith(`/${candidate}`) ||
+      normalized.endsWith(`__${candidate}`) ||
+      normalized.endsWith(`-${candidate}`),
+  )
+}
+
+function partTouchesMemoryFile(part: any): boolean {
+  if (!part || typeof part !== "object") return false
+
+  if (part.type === "patch" && Array.isArray(part.files)) {
+    return part.files.some(
+      (file: unknown) =>
+        typeof file === "string" &&
+        (file === MEMORY_FILE || file.endsWith(`/${MEMORY_FILE}`)),
+    )
+  }
+
+  if (part.type !== "tool") return false
+  if (typeof part.tool !== "string") return false
+  if (!WRITE_TOOLS.has(part.tool.toLowerCase())) return false
+
+  const serializedInput = safeStringify(part.state?.input)
+  return serializedInput.includes(MEMORY_FILE)
+}
+
+function partPersistsSerenaMemory(part: any): boolean {
+  if (!part || typeof part !== "object") return false
+  if (part.type !== "tool") return false
+  if (typeof part.tool !== "string") return false
+  return toolNameMatches(part.tool, ["write_memory", "edit_memory"])
+}
+
+function getPersistenceEvidence(parts: Array<any>) {
+  const serenaParts = parts.filter((part) => partPersistsSerenaMemory(part))
+  const memoryParts = parts.filter((part) => partTouchesMemoryFile(part))
+
+  return {
+    hasSerenaPersistence: serenaParts.length > 0,
+    hasMemoryPersistence: memoryParts.length > 0,
+    serenaTools: serenaParts.map((part) => part.tool),
+    memoryTools: memoryParts
+      .map((part) => {
+        if (part.type === "patch") return "patch"
+        return part.tool
+      })
+      .filter((value): value is string => typeof value === "string"),
+  }
+}
+
+function buildMissingPersistencePrompt(evidence: ReturnType<typeof getPersistenceEvidence>): string {
+  const missing: Array<string> = []
+
+  if (!evidence.hasSerenaPersistence) {
+    missing.push("- MCP Serena ausente: não detectei `write_memory` nem `edit_memory` neste turno")
+  }
+
+  if (!evidence.hasMemoryPersistence) {
+    missing.push(`- MEMORY.md ausente: não detectei edição real em \`${MEMORY_FILE}\` neste turno`)
+  }
+
+  return [
+    "## PERSISTÊNCIA INCOMPLETA — REPITA AGORA",
+    "",
+    "O marcador `<memory-persisted/>` apareceu, mas as evidências obrigatórias não foram encontradas no último turno.",
+    "",
+    ...missing,
+    "",
+    "OBRIGATÓRIO no próximo turno:",
+    "- Executar `write_memory` ou `edit_memory` no MCP Serena",
+    "- Editar ou criar `MEMORY.md` neste projeto",
+    "- Só então finalizar com `<memory-persisted/>`",
+  ].join("\n")
 }
 
 const DUAL_WRITE_INSTRUCTIONS = `## REGRA ABSOLUTA — DUAL-WRITE OBRIGATÓRIO. NENHUMA EXCEÇÃO.
@@ -289,8 +379,29 @@ export const AutoMemoryPlugin: Plugin = async ({ directory, client }) => {
         .join("\n")
 
       const state = loadState(directory)
+      const evidence = getPersistenceEvidence(parts)
 
       if (textContent.includes(PERSISTENCE_MARKER)) {
+        if (!evidence.hasSerenaPersistence || !evidence.hasMemoryPersistence) {
+          await logEvent(
+            client,
+            "warn",
+            `persistence marker rejected for session ${sessionID} (serena=${evidence.hasSerenaPersistence}, memory=${evidence.hasMemoryPersistence})`,
+          )
+
+          try {
+            await client.session.prompt({
+              path: { id: sessionID },
+              body: {
+                parts: [{ type: "text", text: buildMissingPersistencePrompt(evidence) }],
+              },
+            })
+          } catch (err) {
+            await logEvent(client, "error", `failed to re-prompt incomplete persistence: ${err}`)
+          }
+          return
+        }
+
         state.persistedSessions[sessionID] = {
           messageID: info.id ?? "",
           at: new Date().toISOString(),
@@ -330,4 +441,11 @@ export const AutoMemoryPlugin: Plugin = async ({ directory, client }) => {
       output.context.push(COMPACTING_CONTEXT)
     },
   }
+}
+
+export const __test__ = {
+  toolNameMatches,
+  partTouchesMemoryFile,
+  partPersistsSerenaMemory,
+  getPersistenceEvidence,
 }
