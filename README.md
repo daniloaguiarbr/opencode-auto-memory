@@ -27,19 +27,18 @@ wind down a substantive turn without persisting to both.
 This is a functional port of the `memory-guardian.sh` Stop-hook pattern from
 Claude Code. Claude Code can return `decision:"block"` from a hook to
 re-prompt the model; opencode has no equivalent block mechanism, but the
-plugin SDK exposes `client.session.send()` inside the `session.idle` event,
-which is exactly what the [Ralph Loop](https://github.com/rot13maxi/opencode-ralph)
-plugin uses to re-feed a prompt. This plugin reuses the same re-prompt
-technique, adapted for auto-persistence instead of iteration.
+plugin SDK exposes `client.session.prompt()` inside the `session.idle` event,
+which can inject a follow-up prompt into the same session. This plugin reuses
+that technique, adapted for auto-persistence instead of iteration.
 
 ## How it works
 
 ### Triggers
 
 1. **`session.idle`** — fires whenever the agent finishes responding.
-   If the turn had substantive work (write/edit tool calls, or response
-   ≥ 1500 characters), the plugin injects an obligatory dual-write prompt via
-   `client.session.send()`. The agent then executes `write_memory` on Serena
+   If the turn had substantive work (write/edit/apply_patch tool calls,
+   emitted patch parts, or response ≥ 1500 characters), the plugin injects an
+   obligatory dual-write prompt via `client.session.prompt()`. The agent then executes `write_memory` on Serena
    and edits `MEMORY.md`, and must finish the response with the literal tag
    `<memory-persisted/>`.
 
@@ -70,7 +69,8 @@ marks the session as persisted and stops re-injecting. Subsequent
 The plugin re-prompts only when **either** condition holds:
 
 - The session history contains any tool call whose name (lowercased) is in
-  `{write, edit, patch, multiedit, notebookedit}`.
+  `{write, edit, apply_patch, patch, multiedit, notebookedit}`.
+- The session history contains any emitted `patch` part.
 - The last assistant response is ≥ 1500 characters.
 
 Short, read-only turns are ignored — no noise, no unnecessary re-prompts.
@@ -193,7 +193,7 @@ cp ~/.local/share/opencode-auto-memory/plugin/auto-memory.ts \
 |---|---|---|
 | Language | Bash + Python | TypeScript (Bun runtime) |
 | Trigger | `Stop` hook, stdin JSON | `session.idle` + `experimental.session.compacting` |
-| Re-prompt mechanism | `{decision:"block", reason:...}` via stdout | `client.session.send()` from plugin hook |
+| Re-prompt mechanism | `{decision:"block", reason:...}` via stdout | `client.session.prompt()` from plugin hook |
 | Anti-loop guard | `stop_hook_active` flag in payload | `.state.json` + `<memory-persisted/>` tag |
 | Substantive check | ≥ 3000-byte transcript | ≥ 1500-char last response OR write-tool call |
 | Dual-write channels | Serena + MEMORY.md | Serena + MEMORY.md |
@@ -204,6 +204,13 @@ cp ~/.local/share/opencode-auto-memory/plugin/auto-memory.ts \
 **Plugin doesn't seem to fire.** Verify the symlink exists and the target
 file is readable: `ls -la ~/.config/opencode/plugin/auto-memory.ts`. Restart
 opencode after (re)installing.
+
+**Plugin loads but never re-prompts.** Ensure your installed version uses the
+current SDK request shape: `client.session.messages({ path: { id } })`,
+`client.session.prompt({ path: { id }, body: { parts } })`, and
+`client.app.log({ body: ... })`. Older variants that called `session.get()`,
+`session.send()`, or `app.log()` without `body` can silently no-op against
+newer SDK builds.
 
 **Agent ignores the re-prompt.** Check that Serena MCP is actually running
 (inspect your opencode logs). Also check the state file — if the session

@@ -28,10 +28,21 @@ const MIN_RESPONSE_CHARS = 1500
 const WRITE_TOOLS = new Set([
   "write",
   "edit",
+  "apply_patch",
   "patch",
   "multiedit",
   "notebookedit",
 ])
+
+type SessionMessage = {
+  info?: {
+    id?: string
+    role?: string
+  }
+  parts?: Array<any>
+  id?: string
+  role?: string
+}
 
 interface AutoMemoryState {
   persistedSessions: Record<string, { messageID: string; at: string }>
@@ -51,6 +62,49 @@ function saveState(directory: string, state: AutoMemoryState): void {
   const path = join(directory, STATE_FILE)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(state, null, 2), "utf-8")
+}
+
+function unwrapData<T>(value: T | { data?: T } | undefined): T | undefined {
+  if (value && typeof value === "object" && "data" in value) {
+    return (value as { data?: T }).data
+  }
+  return value as T | undefined
+}
+
+async function logEvent(
+  client: any,
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "opencode-auto-memory",
+        level,
+        message,
+      },
+    })
+  } catch {
+    // Logging must never break the persistence hook.
+  }
+}
+
+function getMessageInfo(message: SessionMessage) {
+  return message.info ?? { id: message.id, role: message.role }
+}
+
+function getMessageParts(message: SessionMessage): Array<any> {
+  return Array.isArray(message.parts) ? message.parts : []
+}
+
+function hasWriteLikePart(part: any): boolean {
+  if (!part || typeof part !== "object") return false
+  if (part.type === "patch") return true
+  return (
+    part.type === "tool" &&
+    typeof part.tool === "string" &&
+    WRITE_TOOLS.has(part.tool.toLowerCase())
+  )
 }
 
 const DUAL_WRITE_INSTRUCTIONS = `## REGRA ABSOLUTA — DUAL-WRITE OBRIGATÓRIO. NENHUMA EXCEÇÃO.
@@ -209,23 +263,25 @@ export const AutoMemoryPlugin: Plugin = async ({ directory, client }) => {
       const sessionID = (event as any).properties?.sessionID
       if (!sessionID) return
 
-      let session: any
+      let messages: SessionMessage[]
       try {
-        session = await client.session.get({ id: sessionID })
+        const result = await client.session.messages({
+          path: { id: sessionID },
+        })
+        messages = unwrapData<SessionMessage[]>(result) ?? []
       } catch {
         return
       }
 
-      const messages: any[] = session?.messages ?? session?.data?.messages ?? []
       if (messages.length < 2) return
 
       const lastAssistant = [...messages]
         .reverse()
-        .find((m) => m.info?.role === "assistant" || m.role === "assistant")
+        .find((m) => getMessageInfo(m).role === "assistant")
       if (!lastAssistant) return
 
-      const info = lastAssistant.info ?? lastAssistant
-      const parts: any[] = lastAssistant.parts ?? info.parts ?? []
+      const info = getMessageInfo(lastAssistant)
+      const parts = getMessageParts(lastAssistant)
 
       const textContent = parts
         .filter((p) => p?.type === "text")
@@ -240,46 +296,33 @@ export const AutoMemoryPlugin: Plugin = async ({ directory, client }) => {
           at: new Date().toISOString(),
         }
         saveState(directory, state)
-        await client.app.log({
-          service: "opencode-auto-memory",
-          level: "info",
-          message: `persistence confirmed for session ${sessionID}`,
-        })
+        await logEvent(client, "info", `persistence confirmed for session ${sessionID}`)
         return
       }
 
       const already = state.persistedSessions[sessionID]
       if (already && already.messageID === (info.id ?? "")) return
 
-      const allParts: any[] = messages.flatMap(
-        (m) => m.parts ?? m.info?.parts ?? []
-      )
-      const hasWrites = allParts.some(
-        (p) =>
-          p?.type === "tool" &&
-          typeof p.tool === "string" &&
-          WRITE_TOOLS.has(p.tool.toLowerCase())
-      )
+      const allParts = messages.flatMap((m) => getMessageParts(m))
+      const hasWrites = allParts.some((p) => hasWriteLikePart(p))
 
       if (!hasWrites && textContent.length < MIN_RESPONSE_CHARS) return
 
-      await client.app.log({
-        service: "memory-guardian",
-        level: "info",
-        message: `injecting dual-write prompt in session ${sessionID} (hasWrites=${hasWrites}, chars=${textContent.length})`,
-      })
+      await logEvent(
+        client,
+        "info",
+        `injecting dual-write prompt in session ${sessionID} (hasWrites=${hasWrites}, chars=${textContent.length})`,
+      )
 
       try {
-        await client.session.send({
-          id: sessionID,
-          text: DUAL_WRITE_INSTRUCTIONS,
+        await client.session.prompt({
+          path: { id: sessionID },
+          body: {
+            parts: [{ type: "text", text: DUAL_WRITE_INSTRUCTIONS }],
+          },
         })
       } catch (err) {
-        await client.app.log({
-          service: "opencode-auto-memory",
-          level: "error",
-          message: `failed to inject dual-write prompt: ${err}`,
-        })
+        await logEvent(client, "error", `failed to inject dual-write prompt: ${err}`)
       }
     },
 
